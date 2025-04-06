@@ -4,7 +4,7 @@ on: [workflow_dispatch]
 jobs:
   automate-dns-setup:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
     - name: Set up Xvfb and recording
       run: |
@@ -23,35 +23,33 @@ jobs:
 
     - name: Configure DNS
       run: |
-        # Completely remove systemd-resolved
-        sudo systemctl stop systemd-resolved
-        sudo systemctl disable systemd-resolved
-        sudo systemctl mask systemd-resolved
-        sudo rm /etc/resolv.conf
-
-        # Create new resolv.conf with immutable flag
-        echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
-        sudo chattr +i /etc/resolv.conf
-
-        # Configure dnsmasq with full options
+        # Configure dnsmasq with external DNS fallback
         echo "listen-address=127.0.0.1" | sudo tee -a /etc/dnsmasq.conf
+        echo "server=8.8.8.8" | sudo tee -a /etc/dnsmasq.conf  # Google DNS fallback
         echo "no-resolv" | sudo tee -a /etc/dnsmasq.conf
         echo "local=/ahmadi.me/" | sudo tee -a /etc/dnsmasq.conf
         echo "address=/ahmadi.me/1.2.3.4" | sudo tee -a /etc/dnsmasq.conf
         echo "address=/blog.ahmadi.me/2.2.2.2" | sudo tee -a /etc/dnsmasq.conf
         echo "address=/dev.ahmadi.me/4.4.4.4" | sudo tee -a /etc/dnsmasq.conf
 
-        # Force-reload configuration
-        sudo systemctl restart dnsmasq
-        sleep 2  # Wait for service stabilization
+        # Handle system DNS carefully
+        sudo systemctl stop systemd-resolved || true
+        echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
+        echo "nameserver 8.8.8.8" | sudo tee -a /etc/resolv.conf  # Dual DNS config
+        sudo chattr +i /etc/resolv.conf
 
-        # Verify service status
-        sudo systemctl status dnsmasq
-        
-        # Test with verbose output
-        nslookup -debug ahmadi.me 127.0.0.1
-        nslookup -debug blog.ahmadi.me 127.0.0.1
-        nslookup -debug dev.ahmadi.me 127.0.0.1
+        # Restart service
+        sudo systemctl restart dnsmasq
+        sleep 2
+
+        # Verify external DNS resolution
+        nslookup github.com
+        nslookup actions.githubusercontent.com
+
+        # Test homework records
+        nslookup ahmadi.me 127.0.0.1
+        nslookup blog.ahmadi.me 127.0.0.1
+        nslookup dev.ahmadi.me 127.0.0.1
 
     - name: Stop recording and save
       run: |
@@ -59,8 +57,10 @@ jobs:
         sleep 5
         pkill Xvfb
 
-    - name: Upload recording
+    - name: Upload recording with retries
       uses: actions/upload-artifact@v4
       with:
         name: dns-setup-recording
         path: output.mp4
+        retention-days: 1
+      timeout-minutes: 5  # Give extra time for upload
