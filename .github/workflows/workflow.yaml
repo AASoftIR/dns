@@ -1,256 +1,95 @@
-name: DNS Server Setup with Screen Recording
+name: Record Homework Execution
 
+# How the workflow is triggered:
+# - workflow_dispatch allows you to run it manually from the Actions tab in GitHub
 on:
   workflow_dispatch:
-    inputs:
-      domain_name:
-        description: 'Your domain name (without .me extension)'
-        required: true
-        default: 'yourlastname'
+  # You could also trigger on push, pull request, etc.
+  # push:
+  #   branches: [ main ]
 
 jobs:
-  setup-dns-server:
-    runs-on: ubuntu-latest
-    
+  record_and_run:
+    runs-on: ubuntu-latest # Use the latest Ubuntu runner
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      
-      - name: Install required packages
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (xvfb, ffmpeg, and homework deps)
         run: |
           sudo apt-get update
-          sudo apt-get install -y bind9 bind9utils bind9-doc ffmpeg scrot
-          sudo apt-get install -y pandoc texlive-latex-base texlive-fonts-recommended
-      
-      - name: Set up virtual display
+          sudo apt-get install -y xvfb ffmpeg xdotool # Added xdotool for potential interaction/focus
+          # Add any other dependencies your homework needs here
+          # sudo apt-get install -y python3-pip nodejs etc...
+
+      - name: Start Virtual Framebuffer (Xvfb)
         run: |
-          Xvfb :99 -screen 0 1920x1080x24 &
-          export DISPLAY=:99
-          sleep 2
-      
-      - name: Start screen recording
+          Xvfb :99 -screen 0 1280x720x24 & # Start xvfb on display :99 with 1280x720 resolution
+          echo "DISPLAY=:99" >> $GITHUB_ENV # Export DISPLAY for subsequent steps
+
+      - name: Start Screen Recording (ffmpeg)
         run: |
-          export DISPLAY=:99
-          ffmpeg -f x11grab -video_size 1920x1080 -framerate 10 -i :99 -c:v libx264 -qp 0 -preset ultrafast dns_setup_recording.mp4 &
-          echo $! > ffmpeg_pid.txt
-          sleep 5
-      
-      - name: Configure BIND DNS server
+          VIDEO_FILENAME="homework-recording-$(date +%Y%m%d-%H%M%S).mp4"
+          echo "VIDEO_FILENAME=${VIDEO_FILENAME}" >> $GITHUB_ENV # Make filename available to other steps
+          ffmpeg -video_size 1280x720 -framerate 25 -f x11grab -i :99.0 \
+                 -codec:v libx264 -preset ultrafast -pix_fmt yuv420p \
+                 "$VIDEO_FILENAME" & # Start ffmpeg in the background
+          echo $! > ffmpeg.pid # Save ffmpeg's process ID to stop it later
+          sleep 5 # Give ffmpeg a moment to start up
+
+      - name: Run Homework Steps
+        env:
+           # Ensure DISPLAY is set if any GUI apps are launched directly
+           DISPLAY: :99
         run: |
-          export DISPLAY=:99
-          
-          # Create directory for screenshots and outputs
-          mkdir -p screenshots
-          mkdir -p outputs
-          
-          # Create configuration files
-          echo "Creating BIND configuration files for ${{ github.event.inputs.domain_name }}.me"
-          
-          # Create zone configuration
-          sudo bash -c "cat > /etc/bind/named.conf.local << EOF
-          zone \"${{ github.event.inputs.domain_name }}.me\" {
-              type master;
-              file \"/etc/bind/db.${{ github.event.inputs.domain_name }}.me\";
-          };
-          EOF"
-          
-          # Create zone file
-          sudo bash -c "cat > /etc/bind/db.${{ github.event.inputs.domain_name }}.me << EOF
-          \$TTL    604800
-          @       IN      SOA     ${{ github.event.inputs.domain_name }}.me. root.${{ github.event.inputs.domain_name }}.me. (
-                                  1         ; Serial
-                             604800         ; Refresh
-                              86400         ; Retry
-                            2419200         ; Expire
-                             604800 )       ; Negative Cache TTL
-          @       IN      NS      ns.${{ github.event.inputs.domain_name }}.me.
-          ns      IN      A       127.0.0.1
-          @       IN      A       1.2.3.4
-          blog    IN      A       2.2.2.2
-          dev     IN      A       4.4.4.4
-          EOF"
-          
-          # Save configuration files for reporting
-          cp /etc/bind/named.conf.local outputs/named.conf.local
-          cp /etc/bind/db.${{ github.event.inputs.domain_name }}.me outputs/zone_file.txt
-          
-          # Create a visual representation using HTML
-          cat > config_display.html << EOF
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>DNS Configuration</title>
-            <style>
-              body { font-family: monospace; background: #f0f0f0; padding: 20px; }
-              .config { background: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-              h1 { color: #333; }
-              pre { background: #f8f8f8; padding: 10px; border-left: 5px solid #0066cc; }
-            </style>
-          </head>
-          <body>
-            <h1>DNS Configuration for ${{ github.event.inputs.domain_name }}.me</h1>
-            <div class="config">
-              <h2>named.conf.local</h2>
-              <pre>$(cat /etc/bind/named.conf.local)</pre>
-            </div>
-            <div class="config">
-              <h2>Zone File: db.${{ github.event.inputs.domain_name }}.me</h2>
-              <pre>$(cat /etc/bind/db.${{ github.event.inputs.domain_name }}.me)</pre>
-            </div>
-          </body>
-          </html>
-          EOF
-          
-          # Start a simple web server to display the HTML
-          python3 -m http.server 8000 &
-          server_pid=$!
-          sleep 2
-          
-          # Use Firefox to display the HTML
-          sudo apt-get install -y firefox
-          firefox http://localhost:8000/config_display.html &
-          firefox_pid=$!
-          sleep 5
-          
-          # Take screenshot
-          scrot screenshots/config_files.png
-          
-          # Restart BIND
-          sudo systemctl restart bind9
-          sleep 5
-          
-          # Test DNS records
-          echo "Testing DNS records with nslookup"
-          
-          # Create HTML for nslookup results
-          cat > nslookup_display.html << EOF
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>DNS Lookup Results</title>
-            <style>
-              body { font-family: monospace; background: #f0f0f0; padding: 20px; }
-              .result { background: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-              h1 { color: #333; }
-              pre { background: #f8f8f8; padding: 10px; border-left: 5px solid #0066cc; }
-            </style>
-          </head>
-          <body>
-            <h1>DNS Lookup Results for ${{ github.event.inputs.domain_name }}.me</h1>
-          EOF
-          
-          # Test root domain
-          nslookup ${{ github.event.inputs.domain_name }}.me 127.0.0.1 > outputs/nslookup_root.txt
-          cat >> nslookup_display.html << EOF
-            <div class="result">
-              <h2>Root Domain: ${{ github.event.inputs.domain_name }}.me</h2>
-              <pre>$(cat outputs/nslookup_root.txt)</pre>
-            </div>
-          EOF
-          
-          # Test blog subdomain
-          nslookup blog.${{ github.event.inputs.domain_name }}.me 127.0.0.1 > outputs/nslookup_blog.txt
-          cat >> nslookup_display.html << EOF
-            <div class="result">
-              <h2>Blog Subdomain: blog.${{ github.event.inputs.domain_name }}.me</h2>
-              <pre>$(cat outputs/nslookup_blog.txt)</pre>
-            </div>
-          EOF
-          
-          # Test dev subdomain
-          nslookup dev.${{ github.event.inputs.domain_name }}.me 127.0.0.1 > outputs/nslookup_dev.txt
-          cat >> nslookup_display.html << EOF
-            <div class="result">
-              <h2>Dev Subdomain: dev.${{ github.event.inputs.domain_name }}.me</h2>
-              <pre>$(cat outputs/nslookup_dev.txt)</pre>
-            </div>
-          </body>
-          </html>
-          EOF
-          
-          # Display nslookup results
-          firefox http://localhost:8000/nslookup_display.html &
-          sleep 5
-          scrot screenshots/nslookup_results.png
-          
-          # Create a PDF report
-          echo "Creating PDF report"
-          
-          cat > report.md << EOF
-          # DNS Server Setup Report
-          
-          ## Domain Configuration
-          - Domain name: ${{ github.event.inputs.domain_name }}.me
-          - DNS Server: BIND9 on Ubuntu
-          
-          ## Named Configuration File
-          \`\`\`
-          $(cat /etc/bind/named.conf.local)
-          \`\`\`
-          
-          ## Zone File
-          \`\`\`
-          $(cat /etc/bind/db.${{ github.event.inputs.domain_name }}.me)
-          \`\`\`
-          
-          ## DNS Records
-          | Domain | IP Address |
-          |--------|------------|
-          | ${{ github.event.inputs.domain_name }}.me | 1.2.3.4 |
-          | blog.${{ github.event.inputs.domain_name }}.me | 2.2.2.2 |
-          | dev.${{ github.event.inputs.domain_name }}.me | 4.4.4.4 |
-          
-          ## Testing Results
-          
-          ### Root Domain Test
-          \`\`\`
-          $(cat outputs/nslookup_root.txt)
-          \`\`\`
-          
-          ### Blog Subdomain Test
-          \`\`\`
-          $(cat outputs/nslookup_blog.txt)
-          \`\`\`
-          
-          ### Dev Subdomain Test
-          \`\`\`
-          $(cat outputs/nslookup_dev.txt)
-          \`\`\`
-          EOF
-          
-          pandoc report.md -o DNS_Server_Setup_Report.pdf
-          
-          # Sleep to ensure all processes complete
+          echo "Starting homework execution..."
+          # ------------------------------------------------------------
+          # ---- REPLACE THE FOLLOWING LINES WITH YOUR ACTUAL HOMEWORK COMMANDS ----
+          # Example: If your homework is a script:
+          # chmod +x ./homework_script.sh
+          # ./homework_script.sh
+
+          # Example: If it involves multiple commands:
+          echo "Step 1: Doing something..."
+          sleep 5 # Simulate work
+          # Maybe launch a simple GUI app if needed for testing recording:
+          # sudo apt-get install -y x11-apps
+          # xterm & # Launch a terminal IN the virtual display
+          # sleep 2
+          # xdotool type "echo 'Hello from xterm!'" # Type into the focused window (likely xterm)
+          # xdotool key Return
+          # sleep 5
+          # pkill xterm || true # Close the test terminal
+
+          echo "Step 2: Doing something else..."
+          sleep 5 # Simulate more work
+
+          echo "Homework finished."
+          # ---- END OF HOMEWORK COMMANDS ----
+          # ------------------------------------------------------------
+
+      - name: Stop Screen Recording
+        run: |
+          echo "Stopping screen recording..."
+          # Send SIGINT to ffmpeg for graceful shutdown
+          kill -SIGINT $(cat ffmpeg.pid) || echo "ffmpeg already stopped."
+          # Wait a bit for ffmpeg to finalize the video file
           sleep 10
-          
-          # Kill background processes
-          kill $server_pid $firefox_pid 2>/dev/null || true
-      
-      - name: Stop screen recording
+
+      - name: Stop Virtual Framebuffer (Xvfb)
+        # This often isn't strictly necessary as the runner environment cleans up,
+        # but it's good practice. Run even if prior steps failed.
+        if: always()
         run: |
-          kill $(cat ffmpeg_pid.txt) || true
-          sleep 5
-      
-      - name: Upload video recording as artifact
+          echo "Stopping Xvfb..."
+          pkill Xvfb || echo "Xvfb already stopped."
+
+      - name: Upload Screen Recording Artifact
+        # Run even if homework steps failed, so you might capture error states
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dns-setup-recording
-          path: dns_setup_recording.mp4
-          
-      - name: Upload screenshots as artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dns-setup-screenshots
-          path: screenshots/
-          
-      - name: Upload configuration files and outputs
-        uses: actions/upload-artifact@v4
-        with:
-          name: dns-setup-outputs
-          path: outputs/
-          
-      - name: Upload PDF report as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dns-setup-report
-          path: DNS_Server_Setup_Report.pdf
+          name: screen-recording
+          path: ${{ env.VIDEO_FILENAME }} # Upload the generated video file
+          if-no-files-found: error # Optional: Fail if video wasn't created
