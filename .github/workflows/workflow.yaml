@@ -1,12 +1,9 @@
-name: Record Homework Execution
+# .github/workflows/record_homework.yml
+name: Record Homework Execution (Debugged)
 
-# How the workflow is triggered:
-# - workflow_dispatch allows you to run it manually from the Actions tab in GitHub
+# Trigger manually from the Actions tab
 on:
   workflow_dispatch:
-  # You could also trigger on push, pull request, etc.
-  # push:
-  #   branches: [ main ]
 
 jobs:
   record_and_run:
@@ -16,80 +13,125 @@ jobs:
       - name: Checkout repository code
         uses: actions/checkout@v4
 
-      - name: Install dependencies (xvfb, ffmpeg, and homework deps)
+      - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb ffmpeg xdotool # Added xdotool for potential interaction/focus
-          # Add any other dependencies your homework needs here
-          # sudo apt-get install -y python3-pip nodejs etc...
+          echo "Updating package list and installing dependencies..."
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            xvfb \
+            ffmpeg \
+            x11-apps \
+            xdotool
+          echo "Dependencies installed."
+          # --- ADD ANY OTHER DEPENDENCIES YOUR HOMEWORK NEEDS BELOW ---
+          # Example: sudo apt-get install -y python3-pip nodejs make etc...
 
       - name: Start Virtual Framebuffer (Xvfb)
         run: |
-          Xvfb :99 -screen 0 1280x720x24 & # Start xvfb on display :99 with 1280x720 resolution
-          echo "DISPLAY=:99" >> $GITHUB_ENV # Export DISPLAY for subsequent steps
+          echo "Starting Xvfb on display :99..."
+          Xvfb :99 -screen 0 1280x720x24 &
+          # Set DISPLAY environment variable for all subsequent steps in this job
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+          echo "Xvfb started. DISPLAY is set to :99 for subsequent steps."
+          sleep 2 # Give Xvfb a moment to initialize
 
       - name: Start Screen Recording (ffmpeg)
         run: |
+          # Generate a unique filename for the video
           VIDEO_FILENAME="homework-recording-$(date +%Y%m%d-%H%M%S).mp4"
           echo "VIDEO_FILENAME=${VIDEO_FILENAME}" >> $GITHUB_ENV # Make filename available to other steps
-          ffmpeg -video_size 1280x720 -framerate 25 -f x11grab -i :99.0 \
+          echo "Starting ffmpeg recording, saving to ${VIDEO_FILENAME}..."
+
+          # Start ffmpeg in the background, capturing from display :99
+          # Options: video size, frame rate, input format (x11grab), input display (:99.0)
+          #          video codec (libx264), preset (ultrafast for speed), pixel format (yuv420p for compatibility)
+          ffmpeg -video_size 1280x720 -framerate 15 -f x11grab -i :99.0 \
                  -codec:v libx264 -preset ultrafast -pix_fmt yuv420p \
-                 "$VIDEO_FILENAME" & # Start ffmpeg in the background
-          echo $! > ffmpeg.pid # Save ffmpeg's process ID to stop it later
-          sleep 5 # Give ffmpeg a moment to start up
+                 "$VIDEO_FILENAME" &
 
-      - name: Run Homework Steps
-        env:
-           # Ensure DISPLAY is set if any GUI apps are launched directly
-           DISPLAY: :99
+          # Save ffmpeg's process ID (PID) to stop it later gracefully
+          echo $! > ffmpeg.pid
+          echo "ffmpeg process started with PID $(cat ffmpeg.pid). Recording to ${VIDEO_FILENAME}."
+          sleep 5 # Give ffmpeg time to start capturing
+
+      - name: Run Test Case and Homework Steps
+        # Note: The DISPLAY env var set via $GITHUB_ENV in the previous step is automatically available here
         run: |
-          echo "Starting homework execution..."
+          echo "--- Running Recording Test Case ---"
+          echo "Launching xterm..."
+          # Launch xterm in the background. Use full path if needed, though usually not.
+          /usr/bin/xterm -geometry 100x30+10+10 -T "Homework Session" &
+          XTERM_PID=$!
+          echo "xterm launched with PID ${XTERM_PID}"
+          sleep 5 # Wait for xterm window to appear and ffmpeg to catch it
+
+          echo "Simulating keyboard input into xterm using xdotool..."
+          # Make sure xterm likely has focus (usually does if just launched)
+          xdotool type "echo 'Hello! This is a test inside xterm.'" && xdotool key Return
+          sleep 2
+          xdotool type "date" && xdotool key Return
+          sleep 2
+          xdotool type "echo 'Simulating some work...'" && xdotool key Return
+          sleep 5
+          xdotool type "echo 'Test complete. Closing xterm.'" && xdotool key Return
+          sleep 2
+          xdotool type "exit" && xdotool key Return
+
+          # Wait a moment after exit command before killing, just in case
+          sleep 3
+          echo "Attempting to kill xterm PID ${XTERM_PID} if it's still running..."
+          kill ${XTERM_PID} || echo "xterm already exited or could not be killed."
+          echo "--- Test Case Finished ---"
+
+          echo ""
+          echo "--- Running Actual Homework Steps ---"
           # ------------------------------------------------------------
-          # ---- REPLACE THE FOLLOWING LINES WITH YOUR ACTUAL HOMEWORK COMMANDS ----
-          # Example: If your homework is a script:
-          # chmod +x ./homework_script.sh
-          # ./homework_script.sh
+          # ---- REPLACE/ADD YOUR ACTUAL HOMEWORK COMMANDS BELOW ----
+          # ---- Remember: Only GUI apps will show up clearly!   ----
 
-          # Example: If it involves multiple commands:
-          echo "Step 1: Doing something..."
-          sleep 5 # Simulate work
-          # Maybe launch a simple GUI app if needed for testing recording:
-          # sudo apt-get install -y x11-apps
-          # xterm & # Launch a terminal IN the virtual display
-          # sleep 2
-          # xdotool type "echo 'Hello from xterm!'" # Type into the focused window (likely xterm)
-          # xdotool key Return
-          # sleep 5
-          # pkill xterm || true # Close the test terminal
+          echo "Starting homework task 1..."
+          sleep 5 # Replace with actual command(s)
+          echo "Starting homework task 2..."
+          # Example: python3 your_script.py --input data.txt --output results.txt
+          # Example: ./your_compiled_program
+          sleep 5 # Replace with actual command(s)
 
-          echo "Step 2: Doing something else..."
-          sleep 5 # Simulate more work
-
-          echo "Homework finished."
+          echo "--- Actual Homework Finished ---"
           # ---- END OF HOMEWORK COMMANDS ----
           # ------------------------------------------------------------
 
       - name: Stop Screen Recording
+        # Use if: always() to ensure this runs even if the homework step fails
+        if: always()
         run: |
-          echo "Stopping screen recording..."
-          # Send SIGINT to ffmpeg for graceful shutdown
-          kill -SIGINT $(cat ffmpeg.pid) || echo "ffmpeg already stopped."
-          # Wait a bit for ffmpeg to finalize the video file
-          sleep 10
+          echo "Stopping screen recording (sending SIGINT to ffmpeg)..."
+          if [ -f ffmpeg.pid ]; then
+            # Send SIGINT (Ctrl+C) for graceful shutdown, allowing file finalization
+            kill -SIGINT $(cat ffmpeg.pid) || echo "Failed to send SIGINT to ffmpeg PID $(cat ffmpeg.pid). It might have already stopped."
+            # Wait for ffmpeg to finish writing the file
+            echo "Waiting for ffmpeg to finalize the video file..."
+            sleep 10 # Adjust sleep time if needed for large videos
+            rm ffmpeg.pid
+          else
+            echo "ffmpeg.pid not found. Recording might not have started correctly or was already stopped."
+          fi
+          echo "Screen recording stop sequence finished."
 
       - name: Stop Virtual Framebuffer (Xvfb)
-        # This often isn't strictly necessary as the runner environment cleans up,
-        # but it's good practice. Run even if prior steps failed.
+        # Use if: always() for cleanup
         if: always()
         run: |
           echo "Stopping Xvfb..."
-          pkill Xvfb || echo "Xvfb already stopped."
+          # Find and kill the Xvfb process
+          pkill Xvfb || echo "Xvfb already stopped or could not be stopped."
+          echo "Xvfb stop sequence finished."
 
       - name: Upload Screen Recording Artifact
-        # Run even if homework steps failed, so you might capture error states
+        # Use if: always() to ensure artifact is uploaded even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: screen-recording
-          path: ${{ env.VIDEO_FILENAME }} # Upload the generated video file
-          if-no-files-found: error # Optional: Fail if video wasn't created
+          name: screen-recording # Name of the artifact zip file
+          path: ${{ env.VIDEO_FILENAME }} # Path to the video file created earlier
+          if-no-files-found: warn # Change to 'error' if you want the workflow to fail if the video is missing
+          retention-days: 7 # Optional: How long to keep the artifact
