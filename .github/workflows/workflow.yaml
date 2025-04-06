@@ -1,187 +1,47 @@
-name: DNS Server Setup with Screen Recording
-
-on:
-  workflow_dispatch:
-    inputs:
-      domain_name:
-        description: 'Your domain name (without .me extension)'
-        required: true
-        default: 'yourlastname'
+name: DNS Homework Automation
+on: [workflow_dispatch]
 
 jobs:
-  setup-dns-server:
+  automate-dns-setup:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 20
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      
-      - name: Install required packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bind9 bind9utils bind9-doc ffmpeg xvfb x11vnc fluxbox imagemagick xterm
-          sudo apt-get install -y pandoc texlive-latex-base texlive-fonts-recommended
-      
-      - name: Set up virtual display
-        run: |
-          Xvfb :99 -screen 0 1920x1080x24 &
-          export DISPLAY=:99
-          sleep 2
-          fluxbox &
-          x11vnc -display :99 -forever -nopw -quiet &
-          sleep 2
-      
-      - name: Start screen recording
-        run: |
-          export DISPLAY=:99
-          ffmpeg -f x11grab -video_size 1920x1080 -framerate 25 -i :99 -c:v libx264 -qp 0 -preset ultrafast dns_setup_recording.mp4 &
-          echo $! > ffmpeg_pid.txt
-          sleep 5
-      
-      - name: Configure BIND DNS server
-        run: |
-          export DISPLAY=:99
-          
-          # Create a simple script for terminal display
-          cat > /tmp/dns_setup.sh << 'EOF'
-          #!/bin/bash
-          echo "Setting up DNS server for ${DOMAIN_NAME}.me"
-          echo "Creating configuration files..."
-          echo "Testing DNS records..."
-          sleep 10
-          EOF
-          
-          chmod +x /tmp/dns_setup.sh
-          
-          # Launch visible terminal with the script
-          xterm -e "DOMAIN_NAME=${{ github.event.inputs.domain_name }} /tmp/dns_setup.sh" &
-          terminal_pid=$!
-          sleep 5
-          
-          # Create configuration files
-          echo "Creating BIND configuration files for ${{ github.event.inputs.domain_name }}.me"
-          
-          # Create zone configuration
-          sudo bash -c "cat > /etc/bind/named.conf.local << EOF
-          zone \"${{ github.event.inputs.domain_name }}.me\" {
-              type master;
-              file \"/etc/bind/db.${{ github.event.inputs.domain_name }}.me\";
-          };
-          EOF"
-          
-          # Create zone file
-          sudo bash -c "cat > /etc/bind/db.${{ github.event.inputs.domain_name }}.me << EOF
-          \$TTL    604800
-          @       IN      SOA     ${{ github.event.inputs.domain_name }}.me. root.${{ github.event.inputs.domain_name }}.me. (
-                                  1         ; Serial
-                             604800         ; Refresh
-                              86400         ; Retry
-                            2419200         ; Expire
-                             604800 )       ; Negative Cache TTL
-          @       IN      NS      ns.${{ github.event.inputs.domain_name }}.me.
-          ns      IN      A       127.0.0.1
-          @       IN      A       1.2.3.4
-          blog    IN      A       2.2.2.2
-          dev     IN      A       4.4.4.4
-          EOF"
-          
-          # Display configuration for visualization
-          echo "Named configuration:" > /tmp/config_display.txt
-          cat /etc/bind/named.conf.local >> /tmp/config_display.txt
-          echo -e "\nZone file:" >> /tmp/config_display.txt
-          cat /etc/bind/db.${{ github.event.inputs.domain_name }}.me >> /tmp/config_display.txt
-          
-          # Display the config in a new terminal
-          xterm -geometry 80x30 -e "cat /tmp/config_display.txt; sleep 15" &
-          config_pid=$!
-          sleep 5
-          
-          # Take screenshot of configuration display
-          mkdir -p screenshots
-          import -window root screenshots/config_files.png
-          
-          # Restart BIND
-          sudo systemctl restart bind9
-          sleep 5
-          
-          # Test with nslookup - show commands in terminal
-          xterm -geometry 80x30 -e "echo 'Testing domain: ${{ github.event.inputs.domain_name }}.me'; nslookup ${{ github.event.inputs.domain_name }}.me 127.0.0.1; sleep 15" &
-          sleep 5
-          import -window root screenshots/nslookup_root.png
-          nslookup ${{ github.event.inputs.domain_name }}.me 127.0.0.1 > nslookup_root.txt
-          
-          xterm -geometry 80x30 -e "echo 'Testing domain: blog.${{ github.event.inputs.domain_name }}.me'; nslookup blog.${{ github.event.inputs.domain_name }}.me 127.0.0.1; sleep 15" &
-          sleep 5
-          import -window root screenshots/nslookup_blog.png
-          nslookup blog.${{ github.event.inputs.domain_name }}.me 127.0.0.1 > nslookup_blog.txt
-          
-          xterm -geometry 80x30 -e "echo 'Testing domain: dev.${{ github.event.inputs.domain_name }}.me'; nslookup dev.${{ github.event.inputs.domain_name }}.me 127.0.0.1; sleep 15" &
-          sleep 5
-          import -window root screenshots/nslookup_dev.png
-          nslookup dev.${{ github.event.inputs.domain_name }}.me 127.0.0.1 > nslookup_dev.txt
-          
-          # Create a PDF report
-          echo "Creating PDF report"
-          
-          cat > report.md << EOF
-          # DNS Server Setup Report
-          
-          ## Domain Configuration
-          - Domain name: ${{ github.event.inputs.domain_name }}.me
-          - DNS Server: BIND9 on Ubuntu
-          
-          ## DNS Records
-          | Domain | IP Address |
-          |--------|------------|
-          | ${{ github.event.inputs.domain_name }}.me | 1.2.3.4 |
-          | blog.${{ github.event.inputs.domain_name }}.me | 2.2.2.2 |
-          | dev.${{ github.event.inputs.domain_name }}.me | 4.4.4.4 |
-          
-          ## Testing Results
-          
-          ### Root Domain Test
-          \`\`\`
-          $(cat nslookup_root.txt)
-          \`\`\`
-          
-          ### Blog Subdomain Test
-          \`\`\`
-          $(cat nslookup_blog.txt)
-          \`\`\`
-          
-          ### Dev Subdomain Test
-          \`\`\`
-          $(cat nslookup_dev.txt)
-          \`\`\`
-          EOF
-          
-          pandoc report.md -o DNS_Server_Setup_Report.pdf
-          
-          # Sleep to ensure all screenshots are taken
-          sleep 10
-          
-          # Kill any remaining terminals
-          kill $terminal_pid $config_pid 2>/dev/null || true
-      
-      - name: Stop screen recording
-        run: |
-          kill $(cat ffmpeg_pid.txt) || true
-          sleep 5
-      
-      - name: Upload video recording as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dns-setup-recording
-          path: dns_setup_recording.mp4
-          
-      - name: Upload screenshots as artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dns-setup-screenshots
-          path: screenshots/
-          
-      - name: Upload PDF report as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dns-setup-report
-          path: DNS_Server_Setup_Report.pdf
+    - name: Set up Xvfb and recording
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xvfb ffmpeg dnsmasq bind9-utils
+
+    - name: Start virtual display
+      run: Xvfb :99 -screen 0 1280x720x24 &
+      env:
+        DISPLAY: :99
+
+    - name: Start screen recording
+      run: ffmpeg -y -f x11grab -video_size 1280x720 -framerate 15 -i :99 -codec:v libx264rgb output.mp4 &
+      env:
+        DISPLAY: :99
+
+    - name: Configure DNS
+      run: |
+        echo "address=/ahmadi.me/1.2.3.4" | sudo tee -a /etc/dnsmasq.conf
+        echo "address=/blog.ahmadi.me/2.2.2.2" | sudo tee -a /etc/dnsmasq.conf
+        echo "address=/dev.ahmadi.me/4.4.4.4" | sudo tee -a /etc/dnsmasq.conf
+        
+        sudo systemctl restart dnsmasq
+        echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
+        
+        nslookup ahmadi.me
+        nslookup blog.ahmadi.me
+        nslookup dev.ahmadi.me
+
+    - name: Stop recording and save
+      run: |
+        pkill -INT ffmpeg
+        sleep 5
+        pkill Xvfb
+
+    - name: Upload recording
+      uses: actions/upload-artifact@v4  # <<< Updated to v4
+      with:
+        name: dns-setup-recording
+        path: output.mp4
