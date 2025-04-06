@@ -1,0 +1,162 @@
+name: DNS Server Setup with Screen Recording
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain_name:
+        description: 'Your domain name (without .me extension)'
+        required: true
+        default: 'yourlastname'
+
+jobs:
+  setup-dns-server:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Install required packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bind9 bind9utils bind9-doc ffmpeg xvfb x11vnc fluxbox
+      
+      - name: Set up virtual display
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          export DISPLAY=:99
+          sleep 2
+          fluxbox &
+          x11vnc -display :99 -forever -nopw -quiet &
+      
+      - name: Start screen recording
+        run: |
+          export DISPLAY=:99
+          ffmpeg -f x11grab -video_size 1920x1080 -framerate 25 -i :99 -c:v libx264 -qp 0 -preset ultrafast dns_setup_recording.mp4 &
+          echo $! > ffmpeg_pid.txt
+          sleep 5
+      
+      - name: Configure BIND DNS server
+        run: |
+          export DISPLAY=:99
+          
+          # Create a terminal and execute commands
+          x-terminal-emulator &
+          sleep 2
+          
+          # Create configuration files
+          echo "Creating BIND configuration files for ${{ github.event.inputs.domain_name }}.me"
+          
+          # Create zone configuration
+          sudo bash -c "cat > /etc/bind/named.conf.local << EOF
+          zone \"${{ github.event.inputs.domain_name }}.me\" {
+              type master;
+              file \"/etc/bind/db.${{ github.event.inputs.domain_name }}.me\";
+          };
+          EOF"
+          
+          # Create zone file
+          sudo bash -c "cat > /etc/bind/db.${{ github.event.inputs.domain_name }}.me << EOF
+          \$TTL    604800
+          @       IN      SOA     ${{ github.event.inputs.domain_name }}.me. root.${{ github.event.inputs.domain_name }}.me. (
+                                  1         ; Serial
+                             604800         ; Refresh
+                              86400         ; Retry
+                            2419200         ; Expire
+                             604800 )       ; Negative Cache TTL
+          @       IN      NS      ns.${{ github.event.inputs.domain_name }}.me.
+          ns      IN      A       127.0.0.1
+          @       IN      A       1.2.3.4
+          blog    IN      A       2.2.2.2
+          dev     IN      A       4.4.4.4
+          EOF"
+          
+          # Restart BIND
+          sudo systemctl restart bind9
+          sleep 5
+          
+          # Take screenshots for the report
+          mkdir -p screenshots
+          
+          # Screenshot of configuration file
+          echo "Taking screenshot of configuration files"
+          xwd -root -display :99 | convert - screenshots/config_files.png
+          
+          # Test with nslookup
+          echo "Testing DNS records with nslookup"
+          
+          # Test root domain
+          nslookup ${{ github.event.inputs.domain_name }}.me 127.0.0.1 | tee nslookup_root.txt
+          xwd -root -display :99 | convert - screenshots/nslookup_root.png
+          
+          # Test blog subdomain
+          nslookup blog.${{ github.event.inputs.domain_name }}.me 127.0.0.1 | tee nslookup_blog.txt
+          xwd -root -display :99 | convert - screenshots/nslookup_blog.png
+          
+          # Test dev subdomain
+          nslookup dev.${{ github.event.inputs.domain_name }}.me 127.0.0.1 | tee nslookup_dev.txt
+          xwd -root -display :99 | convert - screenshots/nslookup_dev.png
+          
+          # Create a PDF report
+          echo "Creating PDF report"
+          sudo apt-get install -y pandoc texlive-latex-base
+          
+          cat > report.md << EOF
+          # DNS Server Setup Report
+          
+          ## Domain Configuration
+          - Domain name: ${{ github.event.inputs.domain_name }}.me
+          - DNS Server: BIND9 on Ubuntu
+          
+          ## DNS Records
+          | Domain | IP Address |
+          |--------|------------|
+          | ${{ github.event.inputs.domain_name }}.me | 1.2.3.4 |
+          | blog.${{ github.event.inputs.domain_name }}.me | 2.2.2.2 |
+          | dev.${{ github.event.inputs.domain_name }}.me | 4.4.4.4 |
+          
+          ## Testing Results
+          
+          ### Root Domain Test
+          \`\`\`
+          $(cat nslookup_root.txt)
+          \`\`\`
+          
+          ### Blog Subdomain Test
+          \`\`\`
+          $(cat nslookup_blog.txt)
+          \`\`\`
+          
+          ### Dev Subdomain Test
+          \`\`\`
+          $(cat nslookup_dev.txt)
+          \`\`\`
+          EOF
+          
+          pandoc report.md -o DNS_Server_Setup_Report.pdf
+          
+          # Sleep to ensure all screenshots are taken
+          sleep 10
+      
+      - name: Stop screen recording
+        run: |
+          kill $(cat ffmpeg_pid.txt)
+          sleep 5
+      
+      - name: Upload video recording as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: dns-setup-recording
+          path: dns_setup_recording.mp4
+          
+      - name: Upload screenshots as artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: dns-setup-screenshots
+          path: screenshots/
+          
+      - name: Upload PDF report as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: dns-setup-report
+          path: DNS_Server_Setup_Report.pdf
