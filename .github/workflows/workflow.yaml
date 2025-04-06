@@ -1,7 +1,6 @@
-# .github/workflows/debug_recording.yml
-name: DEBUG Screen Recording Setup
+# .github/workflows/debug_recording_v2.yml
+name: DEBUG Screen Recording Setup v2 (Fix xdpyinfo)
 
-# Trigger manually from the Actions tab
 on:
   workflow_dispatch:
 
@@ -10,130 +9,114 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository code (Optional for this test)
-        uses: actions/checkout@v4
-
-      - name: Install Dependencies
+      - name: Install Dependencies (Targeted Fix)
         run: |
-          echo "DEBUG: Updating package list and installing dependencies..."
+          echo "DEBUG: Updating package list..."
           sudo apt-get update -y
-          # Install only the absolute minimum for this test
-          sudo apt-get install -y --no-install-recommends \
+          echo "DEBUG: Installing dependencies (adding x11-utils)..."
+          # Explicitly install x11-utils, and install x11-apps without --no-install-recommends
+          sudo apt-get install -y \
             xvfb \
             ffmpeg \
             x11-apps \
+            x11-utils \
             xdotool
-          echo "DEBUG: Dependencies installed."
-          echo "DEBUG: Checking ffmpeg version..."
-          ffmpeg -version || echo "DEBUG: ffmpeg command failed"
-          echo "DEBUG: Checking xvfb..."
-          which Xvfb || echo "DEBUG: Xvfb command not found"
-          echo "DEBUG: Checking xterm..."
-          which xterm || echo "DEBUG: xterm command not found"
-          echo "DEBUG: Checking xdotool..."
-          which xdotool || echo "DEBUG: xdotool command not found"
-
+          echo "DEBUG: Dependencies installation command finished."
+          echo "--- Sanity Checks ---"
+          echo "DEBUG: Checking PATH: $PATH"
+          echo "DEBUG: Locating xdpyinfo:"
+          which xdpyinfo
+          if [ $? -ne 0 ]; then echo "ERROR: 'which xdpyinfo' failed!"; exit 1; fi
+          echo "DEBUG: Locating Xvfb:"
+          which Xvfb || echo "ERROR: 'which Xvfb' failed!"
+          echo "DEBUG: Locating ffmpeg:"
+          which ffmpeg || echo "ERROR: 'which ffmpeg' failed!"
+          echo "DEBUG: Locating xterm:"
+          which xterm || echo "ERROR: 'which xterm' failed!"
+          echo "DEBUG: Locating xdotool:"
+          which xdotool || echo "ERROR: 'which xdotool' failed!"
+          echo "--- Sanity Checks Done ---"
 
       - name: Start Virtual Framebuffer (Xvfb)
         run: |
           echo "DEBUG: Starting Xvfb on display :99..."
-          # Start xvfb in background, log its output to a file for inspection
           Xvfb :99 -screen 0 1280x720x24 -ac > xvfb.log 2>&1 &
           XVFB_PID=$!
           echo "DEBUG: Xvfb potentially started with PID ${XVFB_PID}"
           echo "DEBUG: Setting DISPLAY=:99 in environment..."
           echo "DISPLAY=:99" >> $GITHUB_ENV
-          sleep 5 # INCREASED sleep to ensure Xvfb is fully ready
+          sleep 5
           echo "DEBUG: Checking if Xvfb process $XVFB_PID exists..."
           ps aux | grep "[X]vfb" || echo "DEBUG: Xvfb process not found!"
+
+          echo "DEBUG: Explicitly checking /usr/bin/xdpyinfo exists..."
+          ls -l /usr/bin/xdpyinfo || echo "DEBUG: /usr/bin/xdpyinfo not found!"
+
           echo "DEBUG: Checking if display :99 is active using xdpyinfo..."
-          # xdpyinfo returns non-zero if it can't connect
-          xdpyinfo -display :99 >/dev/null 2>&1
+          # Try running with full path just in case PATH is weird
+          /usr/bin/xdpyinfo -display :99 >/dev/null 2>&1
           if [ $? -eq 0 ]; then
             echo "DEBUG: xdpyinfo connected to :99 successfully."
           else
-            echo "DEBUG: ERROR - xdpyinfo FAILED to connect to :99. Xvfb might not be running correctly."
+            echo "DEBUG: ERROR - xdpyinfo FAILED to connect to :99."
             echo "DEBUG: Displaying Xvfb log:"
             cat xvfb.log || echo "DEBUG: Could not display xvfb.log"
             exit 1 # Fail the job if xvfb isn't working
           fi
 
+      # --- Start Screen Recording step remains the same as the previous debug version ---
       - name: Start Screen Recording (ffmpeg)
         run: |
-          VIDEO_FILENAME="debug-recording-$(date +%Y%m%d-%H%M%S).mp4"
+          VIDEO_FILENAME="debug-recording-v2-$(date +%Y%m%d-%H%M%S).mp4"
           echo "DEBUG_VIDEO_FILENAME=${VIDEO_FILENAME}" >> $GITHUB_ENV
           echo "DEBUG: Attempting to start ffmpeg recording to ${VIDEO_FILENAME}..."
-          # Start ffmpeg in background, explicitly set loglevel to debug
           ffmpeg -loglevel debug -video_size 1280x720 -framerate 10 -f x11grab -i :99.0 \
                  -codec:v libx264 -preset ultrafast -pix_fmt yuv420p \
                  "$VIDEO_FILENAME" > ffmpeg.log 2>&1 &
           FFMPEG_PID=$!
           echo $FFMPEG_PID > ffmpeg.pid
           echo "DEBUG: ffmpeg potentially started with PID ${FFMPEG_PID}. Log level set to debug."
-          sleep 8 # INCREASED sleep to ensure ffmpeg starts
+          sleep 8
           echo "DEBUG: Checking if ffmpeg process $FFMPEG_PID exists..."
           ps aux | grep "[f]fmpeg" || echo "DEBUG: ffmpeg process not found!"
 
+      # --- Run Minimal GUI Test step remains the same as the previous debug version ---
       - name: Run Minimal GUI Test (xterm)
         env:
-          # Explicitly set DISPLAY here too, just in case GITHUB_ENV had issues (unlikely)
           DISPLAY: :99
         run: |
           echo "DEBUG: --- Running Minimal GUI Test ---"
           echo "DEBUG: Current DISPLAY is $DISPLAY"
-          if [ "$DISPLAY" != ":99" ]; then
-            echo "DEBUG: ERROR - DISPLAY variable is not :99!"
-            exit 1
-          fi
-
+          if [ "$DISPLAY" != ":99" ]; then echo "DEBUG: ERROR - DISPLAY variable is not :99!"; exit 1; fi
           echo "DEBUG: Launching xterm..."
-          xterm -geometry 80x24+10+10 -T "DEBUG SESSION" &
+          xterm -geometry 80x24+10+10 -T "DEBUG SESSION V2" &
           XTERM_PID=$!
           echo "DEBUG: xterm potentially launched with PID ${XTERM_PID}"
-          sleep 8 # INCREASED sleep
-
+          sleep 8
           echo "DEBUG: Checking if xterm process $XTERM_PID exists..."
           ps aux | grep "[x]term" || echo "DEBUG: xterm process not found!"
-
           echo "DEBUG: Simulating typing 'date' into xterm..."
           xdotool type "date" && xdotool key Return
           XDO_EXIT_CODE=$?
-          if [ $XDO_EXIT_CODE -ne 0 ]; then
-             echo "DEBUG: ERROR - xdotool command failed with exit code $XDO_EXIT_CODE"
-             # Try getting focus explicitly if xdotool fails
-             xdotool search --onlyvisible --class XTerm windowfocus || echo "DEBUG: Failed to focus xterm"
-             sleep 1
-             xdotool type "date" && xdotool key Return || echo "DEBUG: xdotool failed again"
-          fi
-          sleep 8 # INCREASED sleep
-
+          if [ $XDO_EXIT_CODE -ne 0 ]; then echo "DEBUG: ERROR - xdotool command failed with exit code $XDO_EXIT_CODE"; fi
+          sleep 8
           echo "DEBUG: Simulating typing 'exit' into xterm..."
           xdotool type "exit" && xdotool key Return
-          sleep 5 # Wait for xterm to close
-
+          sleep 5
           echo "DEBUG: Checking again if xterm process $XTERM_PID exists..."
           ps aux | grep "[x]term" || echo "DEBUG: xterm process seems to have closed as expected."
           echo "DEBUG: --- Minimal GUI Test Finished ---"
 
+      # --- Stop Screen Recording step remains the same ---
       - name: Stop Screen Recording
-        if: always() # Run even if previous steps failed
+        if: always()
         run: |
           echo "DEBUG: Stopping screen recording..."
-          if [ -f ffmpeg.pid ]; then
-            FFMPEG_PID=$(cat ffmpeg.pid)
-            echo "DEBUG: Found ffmpeg.pid with PID $FFMPEG_PID. Sending SIGINT..."
-            kill -SIGINT $FFMPEG_PID || echo "DEBUG: Failed to send SIGINT to ffmpeg PID $FFMPEG_PID (maybe already stopped)."
-            echo "DEBUG: Waiting 15 seconds for ffmpeg to finalize..."
-            sleep 15 # INCREASED wait time
-            echo "DEBUG: Checking if ffmpeg process $FFMPEG_PID still exists..."
-            ps aux | grep "$FFMPEG_PID" | grep -v grep || echo "DEBUG: ffmpeg process $FFMPEG_PID seems to be gone."
-            rm ffmpeg.pid
-          else
-            echo "DEBUG: ffmpeg.pid not found."
-          fi
+          if [ -f ffmpeg.pid ]; then FFMPEG_PID=$(cat ffmpeg.pid); echo "DEBUG: Found ffmpeg.pid with PID $FFMPEG_PID. Sending SIGINT..."; kill -SIGINT $FFMPEG_PID || echo "DEBUG: Failed to send SIGINT to ffmpeg PID $FFMPEG_PID (maybe already stopped)."; echo "DEBUG: Waiting 15 seconds for ffmpeg to finalize..."; sleep 15; echo "DEBUG: Checking if ffmpeg process $FFMPEG_PID still exists..."; ps aux | grep "$FFMPEG_PID" | grep -v grep || echo "DEBUG: ffmpeg process $FFMPEG_PID seems to be gone."; rm ffmpeg.pid; else echo "DEBUG: ffmpeg.pid not found."; fi
           echo "DEBUG: Displaying last few lines of ffmpeg log:"
           tail -n 20 ffmpeg.log || echo "DEBUG: Could not display ffmpeg.log"
 
+      # --- Stop Virtual Framebuffer step remains the same ---
       - name: Stop Virtual Framebuffer (Xvfb)
         if: always()
         run: |
@@ -142,13 +125,14 @@ jobs:
           echo "DEBUG: Displaying last few lines of Xvfb log:"
           tail -n 20 xvfb.log || echo "DEBUG: Could not display xvfb.log"
 
+      # --- Upload Debug Artifacts step remains the same ---
       - name: Upload Debug Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-recording-and-logs
+          name: debug-recording-v2-and-logs
           path: |
             ${{ env.DEBUG_VIDEO_FILENAME }}
             xvfb.log
             ffmpeg.log
-          if-no-files-found: warn # Don't fail if files are missing, just warn
+          if-no-files-found: warn
