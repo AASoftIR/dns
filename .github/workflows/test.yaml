@@ -1,64 +1,86 @@
-name: DNS Homework Automation
+name: Visual DNS Homework
 on: [workflow_dispatch]
 
 jobs:
-  automate-dns-setup:
+  visual-dns-setup:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-    - name: Set up Xvfb and recording
+    - name: Install GUI and tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y xvfb ffmpeg dnsmasq bind9-utils
+        sudo apt-get install -y \
+          xvfb xfce4 x11-apps \
+          ffmpeg xdotool \
+          gnome-terminal dnsmasq
 
-    - name: Start virtual display
-      run: Xvfb :99 -screen 0 1280x720x24 &
-      env:
-        DISPLAY: :99
-
-    - name: Start screen recording
-      run: ffmpeg -y -f x11grab -video_size 1280x720 -framerate 15 -i :99 -codec:v libx264rgb output.mp4 &
-      env:
-        DISPLAY: :99
-
-    - name: Configure DNS
+    - name: Start desktop and recording
       run: |
-        # Stop systemd-resolved temporarily
-        sudo systemctl stop systemd-resolved || true
+        # Start virtual display
+        Xvfb :99 -screen 0 1280x720x24 +extension RANDR &
+        export DISPLAY=:99
 
-        # Configure dnsmasq with dual DNS support
-        echo "listen-address=127.0.0.1" | sudo tee -a /etc/dnsmasq.conf
-        echo "server=8.8.8.8" | sudo tee -a /etc/dnsmasq.conf
-        echo "no-resolv" | sudo tee -a /etc/dnsmasq.conf
-        echo "local=/ahmadi.me/" | sudo tee -a /etc/dnsmasq.conf
-        echo "address=/ahmadi.me/1.2.3.4" | sudo tee -a /etc/dnsmasq.conf
-        echo "address=/blog.ahmadi.me/2.2.2.2" | sudo tee -a /etc/dnsmasq.conf
-        echo "address=/dev.ahmadi.me/4.4.4.4" | sudo tee -a /etc/dnsmasq.conf
+        # Start XFCE desktop
+        startxfce4 &
+        sleep 5
 
-        # Restart dnsmasq with new config
-        sudo systemctl restart dnsmasq
+        # Start recording
+        ffmpeg -y -f x11grab -video_size 1280x720 -framerate 15 -i :99 -codec:v libx264rgb output.mp4 &
 
-        # Set temporary DNS config without file locking
-        echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
-        echo "nameserver 8.8.8.8" | sudo tee -a /etc/resolv.conf
+    - name: Simulate human interaction
+      run: |
+        export DISPLAY=:99
+        
+        # Open terminal with mouse-like behavior
+        xdotool mousemove 100 100 click 1
+        xdotool key ctrl+alt+t
+        sleep 2
 
-        # Verify external DNS
-        nslookup github.com
-        nslookup actions.githubusercontent.com
+        # Type commands slowly
+        xdotool type --delay 100 "sudo -i"
+        xdotool key Return
+        sleep 1
+        
+        xdotool type --delay 50 "apt-get install -y dnsmasq"
+        xdotool key Return
+        sleep 3
 
-        # Test homework records
-        nslookup ahmadi.me 127.0.0.1
-        nslookup blog.ahmadi.me 127.0.0.1
-        nslookup dev.ahmadi.me 127.0.0.1
+        xdotool type --delay 100 "echo 'address=/ahmadi.me/1.2.3.4' >> /etc/dnsmasq.conf"
+        xdotool key Return
+        sleep 1
+        
+        xdotool type --delay 100 "echo 'address=/blog.ahmadi.me/2.2.2.2' >> /etc/dnsmasq.conf"
+        xdotool key Return
+        sleep 1
+        
+        xdotool type --delay 100 "echo 'address=/dev.ahmadi.me/4.4.4.4' >> /etc/dnsmasq.conf"
+        xdotool key Return
+        sleep 1
 
-    - name: Stop recording and save
+        xdotool type --delay 100 "systemctl restart dnsmasq"
+        xdotool key Return
+        sleep 2
+
+        xdotool type --delay 100 "nslookup ahmadi.me"
+        xdotool key Return
+        sleep 2
+        
+        xdotool type --delay 100 "nslookup blog.ahmadi.me"
+        xdotool key Return
+        sleep 2
+
+        xdotool type --delay 100 "nslookup dev.ahmadi.me"
+        xdotool key Return
+        sleep 3
+
+    - name: Finalize and upload
       run: |
         pkill -INT ffmpeg
         sleep 5
-        pkill Xvfb
+      always(): true
 
     - name: Upload recording
       uses: actions/upload-artifact@v4
       with:
-        name: dns-setup-recording
+        name: gui-dns-proof
         path: output.mp4
