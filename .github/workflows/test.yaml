@@ -23,26 +23,26 @@ jobs:
 
     - name: Configure DNS
       run: |
-        # Configure dnsmasq with external DNS fallback
+        # Stop systemd-resolved temporarily
+        sudo systemctl stop systemd-resolved || true
+
+        # Configure dnsmasq with dual DNS support
         echo "listen-address=127.0.0.1" | sudo tee -a /etc/dnsmasq.conf
-        echo "server=8.8.8.8" | sudo tee -a /etc/dnsmasq.conf  # Google DNS fallback
+        echo "server=8.8.8.8" | sudo tee -a /etc/dnsmasq.conf
         echo "no-resolv" | sudo tee -a /etc/dnsmasq.conf
         echo "local=/ahmadi.me/" | sudo tee -a /etc/dnsmasq.conf
         echo "address=/ahmadi.me/1.2.3.4" | sudo tee -a /etc/dnsmasq.conf
         echo "address=/blog.ahmadi.me/2.2.2.2" | sudo tee -a /etc/dnsmasq.conf
         echo "address=/dev.ahmadi.me/4.4.4.4" | sudo tee -a /etc/dnsmasq.conf
 
-        # Handle system DNS carefully
-        sudo systemctl stop systemd-resolved || true
-        echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
-        echo "nameserver 8.8.8.8" | sudo tee -a /etc/resolv.conf  # Dual DNS config
-        sudo chattr +i /etc/resolv.conf
-
-        # Restart service
+        # Restart dnsmasq with new config
         sudo systemctl restart dnsmasq
-        sleep 2
 
-        # Verify external DNS resolution
+        # Set temporary DNS config without file locking
+        echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
+        echo "nameserver 8.8.8.8" | sudo tee -a /etc/resolv.conf
+
+        # Verify external DNS
         nslookup github.com
         nslookup actions.githubusercontent.com
 
@@ -57,10 +57,8 @@ jobs:
         sleep 5
         pkill Xvfb
 
-    - name: Upload recording with retries
+    - name: Upload recording
       uses: actions/upload-artifact@v4
       with:
         name: dns-setup-recording
         path: output.mp4
-        retention-days: 1
-      timeout-minutes: 5  # Give extra time for upload
