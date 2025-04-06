@@ -1,137 +1,154 @@
-# .github/workflows/record_homework.yml
-name: Record Homework Execution (Debugged)
+# .github/workflows/debug_recording.yml
+name: DEBUG Screen Recording Setup
 
 # Trigger manually from the Actions tab
 on:
   workflow_dispatch:
 
 jobs:
-  record_and_run:
-    runs-on: ubuntu-latest # Use the latest Ubuntu runner
+  debug_recording:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository code
+      - name: Checkout repository code (Optional for this test)
         uses: actions/checkout@v4
 
       - name: Install Dependencies
         run: |
-          echo "Updating package list and installing dependencies..."
+          echo "DEBUG: Updating package list and installing dependencies..."
           sudo apt-get update -y
-          sudo apt-get install -y \
+          # Install only the absolute minimum for this test
+          sudo apt-get install -y --no-install-recommends \
             xvfb \
             ffmpeg \
             x11-apps \
             xdotool
-          echo "Dependencies installed."
-          # --- ADD ANY OTHER DEPENDENCIES YOUR HOMEWORK NEEDS BELOW ---
-          # Example: sudo apt-get install -y python3-pip nodejs make etc...
+          echo "DEBUG: Dependencies installed."
+          echo "DEBUG: Checking ffmpeg version..."
+          ffmpeg -version || echo "DEBUG: ffmpeg command failed"
+          echo "DEBUG: Checking xvfb..."
+          which Xvfb || echo "DEBUG: Xvfb command not found"
+          echo "DEBUG: Checking xterm..."
+          which xterm || echo "DEBUG: xterm command not found"
+          echo "DEBUG: Checking xdotool..."
+          which xdotool || echo "DEBUG: xdotool command not found"
+
 
       - name: Start Virtual Framebuffer (Xvfb)
         run: |
-          echo "Starting Xvfb on display :99..."
-          Xvfb :99 -screen 0 1280x720x24 &
-          # Set DISPLAY environment variable for all subsequent steps in this job
+          echo "DEBUG: Starting Xvfb on display :99..."
+          # Start xvfb in background, log its output to a file for inspection
+          Xvfb :99 -screen 0 1280x720x24 -ac > xvfb.log 2>&1 &
+          XVFB_PID=$!
+          echo "DEBUG: Xvfb potentially started with PID ${XVFB_PID}"
+          echo "DEBUG: Setting DISPLAY=:99 in environment..."
           echo "DISPLAY=:99" >> $GITHUB_ENV
-          echo "Xvfb started. DISPLAY is set to :99 for subsequent steps."
-          sleep 2 # Give Xvfb a moment to initialize
+          sleep 5 # INCREASED sleep to ensure Xvfb is fully ready
+          echo "DEBUG: Checking if Xvfb process $XVFB_PID exists..."
+          ps aux | grep "[X]vfb" || echo "DEBUG: Xvfb process not found!"
+          echo "DEBUG: Checking if display :99 is active using xdpyinfo..."
+          # xdpyinfo returns non-zero if it can't connect
+          xdpyinfo -display :99 >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "DEBUG: xdpyinfo connected to :99 successfully."
+          else
+            echo "DEBUG: ERROR - xdpyinfo FAILED to connect to :99. Xvfb might not be running correctly."
+            echo "DEBUG: Displaying Xvfb log:"
+            cat xvfb.log || echo "DEBUG: Could not display xvfb.log"
+            exit 1 # Fail the job if xvfb isn't working
+          fi
 
       - name: Start Screen Recording (ffmpeg)
         run: |
-          # Generate a unique filename for the video
-          VIDEO_FILENAME="homework-recording-$(date +%Y%m%d-%H%M%S).mp4"
-          echo "VIDEO_FILENAME=${VIDEO_FILENAME}" >> $GITHUB_ENV # Make filename available to other steps
-          echo "Starting ffmpeg recording, saving to ${VIDEO_FILENAME}..."
-
-          # Start ffmpeg in the background, capturing from display :99
-          # Options: video size, frame rate, input format (x11grab), input display (:99.0)
-          #          video codec (libx264), preset (ultrafast for speed), pixel format (yuv420p for compatibility)
-          ffmpeg -video_size 1280x720 -framerate 15 -f x11grab -i :99.0 \
+          VIDEO_FILENAME="debug-recording-$(date +%Y%m%d-%H%M%S).mp4"
+          echo "DEBUG_VIDEO_FILENAME=${VIDEO_FILENAME}" >> $GITHUB_ENV
+          echo "DEBUG: Attempting to start ffmpeg recording to ${VIDEO_FILENAME}..."
+          # Start ffmpeg in background, explicitly set loglevel to debug
+          ffmpeg -loglevel debug -video_size 1280x720 -framerate 10 -f x11grab -i :99.0 \
                  -codec:v libx264 -preset ultrafast -pix_fmt yuv420p \
-                 "$VIDEO_FILENAME" &
+                 "$VIDEO_FILENAME" > ffmpeg.log 2>&1 &
+          FFMPEG_PID=$!
+          echo $FFMPEG_PID > ffmpeg.pid
+          echo "DEBUG: ffmpeg potentially started with PID ${FFMPEG_PID}. Log level set to debug."
+          sleep 8 # INCREASED sleep to ensure ffmpeg starts
+          echo "DEBUG: Checking if ffmpeg process $FFMPEG_PID exists..."
+          ps aux | grep "[f]fmpeg" || echo "DEBUG: ffmpeg process not found!"
 
-          # Save ffmpeg's process ID (PID) to stop it later gracefully
-          echo $! > ffmpeg.pid
-          echo "ffmpeg process started with PID $(cat ffmpeg.pid). Recording to ${VIDEO_FILENAME}."
-          sleep 5 # Give ffmpeg time to start capturing
-
-      - name: Run Test Case and Homework Steps
-        # Note: The DISPLAY env var set via $GITHUB_ENV in the previous step is automatically available here
+      - name: Run Minimal GUI Test (xterm)
+        env:
+          # Explicitly set DISPLAY here too, just in case GITHUB_ENV had issues (unlikely)
+          DISPLAY: :99
         run: |
-          echo "--- Running Recording Test Case ---"
-          echo "Launching xterm..."
-          # Launch xterm in the background. Use full path if needed, though usually not.
-          /usr/bin/xterm -geometry 100x30+10+10 -T "Homework Session" &
+          echo "DEBUG: --- Running Minimal GUI Test ---"
+          echo "DEBUG: Current DISPLAY is $DISPLAY"
+          if [ "$DISPLAY" != ":99" ]; then
+            echo "DEBUG: ERROR - DISPLAY variable is not :99!"
+            exit 1
+          fi
+
+          echo "DEBUG: Launching xterm..."
+          xterm -geometry 80x24+10+10 -T "DEBUG SESSION" &
           XTERM_PID=$!
-          echo "xterm launched with PID ${XTERM_PID}"
-          sleep 5 # Wait for xterm window to appear and ffmpeg to catch it
+          echo "DEBUG: xterm potentially launched with PID ${XTERM_PID}"
+          sleep 8 # INCREASED sleep
 
-          echo "Simulating keyboard input into xterm using xdotool..."
-          # Make sure xterm likely has focus (usually does if just launched)
-          xdotool type "echo 'Hello! This is a test inside xterm.'" && xdotool key Return
-          sleep 2
+          echo "DEBUG: Checking if xterm process $XTERM_PID exists..."
+          ps aux | grep "[x]term" || echo "DEBUG: xterm process not found!"
+
+          echo "DEBUG: Simulating typing 'date' into xterm..."
           xdotool type "date" && xdotool key Return
-          sleep 2
-          xdotool type "echo 'Simulating some work...'" && xdotool key Return
-          sleep 5
-          xdotool type "echo 'Test complete. Closing xterm.'" && xdotool key Return
-          sleep 2
+          XDO_EXIT_CODE=$?
+          if [ $XDO_EXIT_CODE -ne 0 ]; then
+             echo "DEBUG: ERROR - xdotool command failed with exit code $XDO_EXIT_CODE"
+             # Try getting focus explicitly if xdotool fails
+             xdotool search --onlyvisible --class XTerm windowfocus || echo "DEBUG: Failed to focus xterm"
+             sleep 1
+             xdotool type "date" && xdotool key Return || echo "DEBUG: xdotool failed again"
+          fi
+          sleep 8 # INCREASED sleep
+
+          echo "DEBUG: Simulating typing 'exit' into xterm..."
           xdotool type "exit" && xdotool key Return
+          sleep 5 # Wait for xterm to close
 
-          # Wait a moment after exit command before killing, just in case
-          sleep 3
-          echo "Attempting to kill xterm PID ${XTERM_PID} if it's still running..."
-          kill ${XTERM_PID} || echo "xterm already exited or could not be killed."
-          echo "--- Test Case Finished ---"
-
-          echo ""
-          echo "--- Running Actual Homework Steps ---"
-          # ------------------------------------------------------------
-          # ---- REPLACE/ADD YOUR ACTUAL HOMEWORK COMMANDS BELOW ----
-          # ---- Remember: Only GUI apps will show up clearly!   ----
-
-          echo "Starting homework task 1..."
-          sleep 5 # Replace with actual command(s)
-          echo "Starting homework task 2..."
-          # Example: python3 your_script.py --input data.txt --output results.txt
-          # Example: ./your_compiled_program
-          sleep 5 # Replace with actual command(s)
-
-          echo "--- Actual Homework Finished ---"
-          # ---- END OF HOMEWORK COMMANDS ----
-          # ------------------------------------------------------------
+          echo "DEBUG: Checking again if xterm process $XTERM_PID exists..."
+          ps aux | grep "[x]term" || echo "DEBUG: xterm process seems to have closed as expected."
+          echo "DEBUG: --- Minimal GUI Test Finished ---"
 
       - name: Stop Screen Recording
-        # Use if: always() to ensure this runs even if the homework step fails
-        if: always()
+        if: always() # Run even if previous steps failed
         run: |
-          echo "Stopping screen recording (sending SIGINT to ffmpeg)..."
+          echo "DEBUG: Stopping screen recording..."
           if [ -f ffmpeg.pid ]; then
-            # Send SIGINT (Ctrl+C) for graceful shutdown, allowing file finalization
-            kill -SIGINT $(cat ffmpeg.pid) || echo "Failed to send SIGINT to ffmpeg PID $(cat ffmpeg.pid). It might have already stopped."
-            # Wait for ffmpeg to finish writing the file
-            echo "Waiting for ffmpeg to finalize the video file..."
-            sleep 10 # Adjust sleep time if needed for large videos
+            FFMPEG_PID=$(cat ffmpeg.pid)
+            echo "DEBUG: Found ffmpeg.pid with PID $FFMPEG_PID. Sending SIGINT..."
+            kill -SIGINT $FFMPEG_PID || echo "DEBUG: Failed to send SIGINT to ffmpeg PID $FFMPEG_PID (maybe already stopped)."
+            echo "DEBUG: Waiting 15 seconds for ffmpeg to finalize..."
+            sleep 15 # INCREASED wait time
+            echo "DEBUG: Checking if ffmpeg process $FFMPEG_PID still exists..."
+            ps aux | grep "$FFMPEG_PID" | grep -v grep || echo "DEBUG: ffmpeg process $FFMPEG_PID seems to be gone."
             rm ffmpeg.pid
           else
-            echo "ffmpeg.pid not found. Recording might not have started correctly or was already stopped."
+            echo "DEBUG: ffmpeg.pid not found."
           fi
-          echo "Screen recording stop sequence finished."
+          echo "DEBUG: Displaying last few lines of ffmpeg log:"
+          tail -n 20 ffmpeg.log || echo "DEBUG: Could not display ffmpeg.log"
 
       - name: Stop Virtual Framebuffer (Xvfb)
-        # Use if: always() for cleanup
         if: always()
         run: |
-          echo "Stopping Xvfb..."
-          # Find and kill the Xvfb process
-          pkill Xvfb || echo "Xvfb already stopped or could not be stopped."
-          echo "Xvfb stop sequence finished."
+          echo "DEBUG: Stopping Xvfb..."
+          pkill Xvfb || echo "DEBUG: pkill Xvfb command failed (maybe already stopped)."
+          echo "DEBUG: Displaying last few lines of Xvfb log:"
+          tail -n 20 xvfb.log || echo "DEBUG: Could not display xvfb.log"
 
-      - name: Upload Screen Recording Artifact
-        # Use if: always() to ensure artifact is uploaded even on failure
+      - name: Upload Debug Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: screen-recording # Name of the artifact zip file
-          path: ${{ env.VIDEO_FILENAME }} # Path to the video file created earlier
-          if-no-files-found: warn # Change to 'error' if you want the workflow to fail if the video is missing
-          retention-days: 7 # Optional: How long to keep the artifact
+          name: debug-recording-and-logs
+          path: |
+            ${{ env.DEBUG_VIDEO_FILENAME }}
+            xvfb.log
+            ffmpeg.log
+          if-no-files-found: warn # Don't fail if files are missing, just warn
