@@ -23,27 +23,35 @@ jobs:
 
     - name: Configure DNS
       run: |
-        # Stop systemd-resolved which conflicts with dnsmasq
+        # Completely remove systemd-resolved
         sudo systemctl stop systemd-resolved
         sudo systemctl disable systemd-resolved
-
-        # Create clean resolv.conf
+        sudo systemctl mask systemd-resolved
         sudo rm /etc/resolv.conf
-        echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
 
-        # Configure dnsmasq
+        # Create new resolv.conf with immutable flag
+        echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
+        sudo chattr +i /etc/resolv.conf
+
+        # Configure dnsmasq with full options
         echo "listen-address=127.0.0.1" | sudo tee -a /etc/dnsmasq.conf
+        echo "no-resolv" | sudo tee -a /etc/dnsmasq.conf
+        echo "local=/ahmadi.me/" | sudo tee -a /etc/dnsmasq.conf
         echo "address=/ahmadi.me/1.2.3.4" | sudo tee -a /etc/dnsmasq.conf
         echo "address=/blog.ahmadi.me/2.2.2.2" | sudo tee -a /etc/dnsmasq.conf
         echo "address=/dev.ahmadi.me/4.4.4.4" | sudo tee -a /etc/dnsmasq.conf
 
-        # Restart dnsmasq with new config
+        # Force-reload configuration
         sudo systemctl restart dnsmasq
+        sleep 2  # Wait for service stabilization
 
-        # Test records
-        nslookup ahmadi.me
-        nslookup blog.ahmadi.me
-        nslookup dev.ahmadi.me
+        # Verify service status
+        sudo systemctl status dnsmasq
+        
+        # Test with verbose output
+        nslookup -debug ahmadi.me 127.0.0.1
+        nslookup -debug blog.ahmadi.me 127.0.0.1
+        nslookup -debug dev.ahmadi.me 127.0.0.1
 
     - name: Stop recording and save
       run: |
