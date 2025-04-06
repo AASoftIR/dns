@@ -1,0 +1,58 @@
+name: DNS Homework Automation
+on: [workflow_dispatch]
+
+jobs:
+  automate-dns-setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - name: Set up Xvfb and recording
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xvfb ffmpeg dnsmasq bind9-utils
+
+    - name: Start virtual display
+      run: Xvfb :99 -screen 0 1280x720x24 &
+      env:
+        DISPLAY: :99
+
+    - name: Start screen recording
+      run: ffmpeg -y -f x11grab -video_size 1280x720 -framerate 15 -i :99 -codec:v libx264rgb output.mp4 &
+      env:
+        DISPLAY: :99
+
+    - name: Configure DNS
+      run: |
+        # Stop systemd-resolved which conflicts with dnsmasq
+        sudo systemctl stop systemd-resolved
+        sudo systemctl disable systemd-resolved
+
+        # Create clean resolv.conf
+        sudo rm /etc/resolv.conf
+        echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
+
+        # Configure dnsmasq
+        echo "listen-address=127.0.0.1" | sudo tee -a /etc/dnsmasq.conf
+        echo "address=/ahmadi.me/1.2.3.4" | sudo tee -a /etc/dnsmasq.conf
+        echo "address=/blog.ahmadi.me/2.2.2.2" | sudo tee -a /etc/dnsmasq.conf
+        echo "address=/dev.ahmadi.me/4.4.4.4" | sudo tee -a /etc/dnsmasq.conf
+
+        # Restart dnsmasq with new config
+        sudo systemctl restart dnsmasq
+
+        # Test records
+        nslookup ahmadi.me
+        nslookup blog.ahmadi.me
+        nslookup dev.ahmadi.me
+
+    - name: Stop recording and save
+      run: |
+        pkill -INT ffmpeg
+        sleep 5
+        pkill Xvfb
+
+    - name: Upload recording
+      uses: actions/upload-artifact@v4
+      with:
+        name: dns-setup-recording
+        path: output.mp4
